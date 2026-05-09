@@ -112,7 +112,7 @@ if st.session_state.stage is None:
     st.session_state.stage = "upload"
 
 # שלב 1
-st.markdown('<div class="step-card"><h3>📁 שלב 1 — העלאת קבצי הקלט</h3>', unsafe_allow_html=True)
+st.markdown('<div class="step-card"><h3 dir="rtl">שלב 1 — העלאת קבצי הקלט 📁</h3>', unsafe_allow_html=True)
 col1, col2, col3 = st.columns(3)
 with col1:
     forecast_file    = st.file_uploader("קובץ צפי", type=["xlsx","xls"], key="f_forecast")
