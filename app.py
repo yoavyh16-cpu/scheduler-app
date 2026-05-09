@@ -75,6 +75,26 @@ div[data-testid="column"] {
     .divider { border: none; border-top: 1px solid #e2e8f0; margin: 1.5rem 0; }
     .violation-item { font-size: 0.85rem; color: #7f1d1d; padding: 0.2rem 0; }
     .issue-item     { font-size: 0.85rem; color: #92400e; padding: 0.2rem 0; }
+    .stApp {
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+section[data-testid="stFileUploaderDropzone"] {
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+section[data-testid="stFileUploaderDropzone"] * {
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+div[data-testid="stFileUploader"] label {
+    direction: rtl !important;
+    text-align: right !important;
+    display: block;
+}
 </style>
 """, unsafe_allow_html=True)
 
