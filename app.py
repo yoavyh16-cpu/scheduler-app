@@ -38,34 +38,6 @@ st.markdown("""
     .metric-box.warn .num { color: #d97706; }
     .metric-box.err  .num { color: #dc2626; }
     .metric-box.ok   .num { color: #059669; }
-    [data-testid="stAppViewContainer"] {
-    direction: rtl;
-    text-align: right;
-}
-
-[data-testid="stFileUploader"] {
-    direction: rtl;
-    text-align: right;
-}
-
-[data-testid="stFileUploader"] section {
-    direction: rtl;
-    text-align: right;
-}
-
-[data-testid="stFileUploader"] button {
-    direction: rtl;
-}
-
-[data-testid="stFileUploader"] small {
-    direction: ltr;
-    unicode-bidi: plaintext;
-}
-
-div[data-testid="column"] {
-    direction: rtl;
-    text-align: right;
-}
     div.stButton > button {
         width: 100%;
         background: linear-gradient(135deg, #1e3a5f, #2d6a9f);
@@ -75,26 +47,6 @@ div[data-testid="column"] {
     .divider { border: none; border-top: 1px solid #e2e8f0; margin: 1.5rem 0; }
     .violation-item { font-size: 0.85rem; color: #7f1d1d; padding: 0.2rem 0; }
     .issue-item     { font-size: 0.85rem; color: #92400e; padding: 0.2rem 0; }
-    .stApp {
-    direction: rtl !important;
-    text-align: right !important;
-}
-
-section[data-testid="stFileUploaderDropzone"] {
-    direction: rtl !important;
-    text-align: right !important;
-}
-
-section[data-testid="stFileUploaderDropzone"] * {
-    direction: rtl !important;
-    text-align: right !important;
-}
-
-div[data-testid="stFileUploader"] label {
-    direction: rtl !important;
-    text-align: right !important;
-    display: block;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -112,7 +64,7 @@ if st.session_state.stage is None:
     st.session_state.stage = "upload"
 
 # שלב 1
-st.markdown('<div class="step-card"><h3 dir="rtl">שלב 1 — העלאת קבצי הקלט 📁</h3>', unsafe_allow_html=True)
+st.markdown('<div class="step-card"><h3 style="direction: rtl; unicode-bidi: bidi-override; text-align: right;">שלב 1 — העלאת קבצי הקלט 📁</h3>', unsafe_allow_html=True)
 col1, col2, col3 = st.columns(3)
 with col1:
     forecast_file    = st.file_uploader("קובץ צפי", type=["xlsx","xls"], key="f_forecast")
@@ -123,7 +75,7 @@ with col3:
 st.markdown('</div>', unsafe_allow_html=True)
 
 # שלב 2
-st.markdown('<div class="step-card"><h3>🔍 שלב 2 — הכנת צפי עם איקסים</h3>', unsafe_allow_html=True)
+st.markdown('<div class="step-card"><h3 style="direction: rtl; unicode-bidi: bidi-override; text-align: right;">שלב 2 — הכנת צפי עם איקסים 🔍</h3>', unsafe_allow_html=True)
 st.markdown('<p style="color:#64748b;font-size:0.9rem;">סימון X אפור בתאים שהעובד חסום בהם. הורד, בדוק ואשר לפני שיבוץ.</p>', unsafe_allow_html=True)
 
 ready_step1 = forecast_file and positions_file
@@ -193,7 +145,7 @@ if st.session_state.stage in ("preview","done") and st.session_state.preview_byt
 st.markdown('</div>', unsafe_allow_html=True)
 
 # שלב 3
-st.markdown('<div class="step-card"><h3>🚀 שלב 3 — הרצת שיבוץ</h3>', unsafe_allow_html=True)
+st.markdown('<div class="step-card"><h3 style="direction: rtl; unicode-bidi: bidi-override; text-align: right;">שלב 3 — הרצת שיבוץ 🚀</h3>', unsafe_allow_html=True)
 st.markdown('<p style="color:#64748b;font-size:0.9rem;">העלה את קובץ הצפי המאושר והרץ את מנוע השיבוץ.</p>', unsafe_allow_html=True)
 
 approved_file = st.file_uploader("קובץ צפי מאושר", type=["xlsx","xls"], key="f_approved")
@@ -274,7 +226,7 @@ if st.session_state.stage == "done":
     violations = s.get("violations", 0)
     hard       = s.get("hard", 0)
 
-    st.markdown('<div class="step-card"><h3>✅ שלב 4 — תוצאות השיבוץ</h3>', unsafe_allow_html=True)
+    st.markdown('<div class="step-card"><h3 style="direction: rtl; unicode-bidi: bidi-override; text-align: right;">שלב 4 — תוצאות השיבוץ ✅</h3>', unsafe_allow_html=True)
     st.markdown(f"""
     <div class="metric-row">
         <div class="metric-box ok"><div class="num">{s.get('filled','-')}</div><div class="lbl">שובצו</div></div>
