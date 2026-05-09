@@ -38,6 +38,34 @@ st.markdown("""
     .metric-box.warn .num { color: #d97706; }
     .metric-box.err  .num { color: #dc2626; }
     .metric-box.ok   .num { color: #059669; }
+    [data-testid="stAppViewContainer"] {
+    direction: rtl;
+    text-align: right;
+}
+
+[data-testid="stFileUploader"] {
+    direction: rtl;
+    text-align: right;
+}
+
+[data-testid="stFileUploader"] section {
+    direction: rtl;
+    text-align: right;
+}
+
+[data-testid="stFileUploader"] button {
+    direction: rtl;
+}
+
+[data-testid="stFileUploader"] small {
+    direction: ltr;
+    unicode-bidi: plaintext;
+}
+
+div[data-testid="column"] {
+    direction: rtl;
+    text-align: right;
+}
     div.stButton > button {
         width: 100%;
         background: linear-gradient(135deg, #1e3a5f, #2d6a9f);
