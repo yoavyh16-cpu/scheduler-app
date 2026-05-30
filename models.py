@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -67,9 +67,13 @@ class Employee:
     max_shifts:      int = 7
 
     # True  = עובד יכול לעבוד בסלוט זה
-    # False = חסום (קובץ האילוצים ציין אותו כלא זמין)
+    # False = חסום (קובץ האילוצים ציין אותו כלא זמין) — אילוץ רך
     availability: Dict[Tuple[int, ShiftType], bool] = field(default_factory=dict)
-    has_constraints: bool = False   # False → לא בקובץ האילוצים → צהוב בפלט
+    has_constraints: bool = False   # False → לא הותאם לקובץ האילוצים → צהוב בפלט
+    matched_constraints: bool = False  # True רק אם הותאם בהצלחה לקובץ האילוצים
+
+    # X בקובץ הצפי — חסימה קשיחה שלא ניתן לבטל (בניגוד ל-X בקובץ האילוצים)
+    forecast_blocked: Set[Tuple[int, ShiftType]] = field(default_factory=set)
 
     # טאפלים של (day, shift_type, position_name) שנוספו על ידי המתזמן
     assigned: List[Tuple[int, ShiftType, str]] = field(default_factory=list)

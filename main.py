@@ -198,18 +198,54 @@ def main() -> None:
         sys.exit(1)
     print(f"  Employees: {len(approved_employees)} loaded.")
 
-    # הקובץ המאושר הוא מקור האמת: X בתאים = חסימה.
-    # אין טעינה חוזרת של קובץ האילוצים כדי שהסרת X ידנית תיכבד.
-    merge_into_employees(approved_employees, {})
-    # עובד שיש לו X בצפי נחשב "יש לו אילוצים" לצורכי קידוד צבעים
+    merge_into_employees(approved_employees, constraints)
+
+    # X שהמנהל שם בקובץ הצפי המקורי (לפני שלב 1) — תמיד קשיח,
+    # גם אם קובץ האילוצים חוסם את אותה משמרת.
+    # שלב 1 לא מגע בתאים שכבר מכילים ערך, לכן X מקורי נשמר בקובץ המאושר.
+    try:
+        original_employees = load_forecast(forecast_path)
+        orig_map = {e.name: e for e in original_employees}
+        for emp in approved_employees:
+            orig = orig_map.get(emp.name)
+            if orig is None:
+                continue
+            for (day, shift), val in orig.forecast_cells.items():
+                if val.upper() == "X":
+                    emp.forecast_blocked.add((day, shift))
+                    emp.availability[(day, shift)] = False
+    except Exception as exc:
+        print(f"[WARNING] Could not load original forecast for hard-X check: {exc}")
+
+    # has_constraints: True אם הותאם לקובץ האילוצים או יש לו X בצפי.
+    # צהוב = לא הותאם לקובץ האילוצים ואין X בצפי.
     for emp in approved_employees:
-        if any(v.upper() == "X" for v in emp.forecast_cells.values()):
-            emp.has_constraints = True
+        has_forecast_x = any(v.upper() == "X" for v in emp.forecast_cells.values())
+        emp.has_constraints = emp.matched_constraints or has_forecast_x
     assign_night_limits(approved_employees)
 
     with_c  = sum(1 for e in approved_employees if e.has_constraints)
     without = len(approved_employees) - with_c
     print(f"  עם X (אילוצים): {with_c},  ללא: {without} (יהיו צהובים בפלט).")
+
+    # --- OT prompt ---
+    total_required = sum(e.required_shifts for e in approved_employees if not e.is_stub)
+    expected_ot = max(0, total_open - total_required)
+    if expected_ot > 0:
+        allow_top10_ot = _ask_ok_cancel(
+            "OT — אישור",
+            f"Expected OT shifts: {expected_ot}.\n\n"
+            "Allow the top 10 most senior employees to receive OT?",
+        )
+        if not allow_top10_ot:
+            capped = sum(
+                1 for e in approved_employees
+                if e.max_night_shifts == 0 and not e.is_stub
+            )
+            for emp in approved_employees:
+                if emp.max_night_shifts == 0 and not emp.is_stub:
+                    emp.max_shifts = emp.required_shifts
+            print(f"  Top-{capped} employees capped at required_shifts (no OT).")
 
     print("\nRunning scheduler …")
     scheduler = Scheduler(approved_employees, slots)
@@ -218,12 +254,15 @@ def main() -> None:
     filled       = sum(1 for s in slots if not s.locked and s.assigned_employee)
     unfilled     = total_open - filled
     n_violations = len(scheduler.violations)
+    n_ot_slots   = sum(1 for s in slots if s.is_ot)
+    n_ot_emps    = sum(1 for e in scheduler.employees.values() if e.ot_assignments)
 
     print()
     _banner("Scheduling Summary")
     print(f"  Open positions      : {total_open}")
     print(f"  Filled              : {filled}")
     print(f"  Unfilled            : {unfilled}  {'(!)' if unfilled else 'OK'}")
+    print(f"  OT shifts           : {n_ot_slots}  ({n_ot_emps} employees)")
     print(f"  Soft violations (X) : {n_violations}")
 
     if scheduler.violations:

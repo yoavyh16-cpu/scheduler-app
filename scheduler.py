@@ -134,7 +134,12 @@ class Scheduler:
         # שלב 5ב — שרשרת 4-כיוונית עמוקה יותר לעובדים שעדיין מתחת למכסה
         self._fill_underquota_deep()
 
-        # שלב 5ג — מוצא אחרון: כפיית מילוי עובדים מתחת למכסה עם הפרות רכות
+        # שלב 5ג — שחרור חסימת רצף: מחליף סלוט חוסם של עובד מתחת למכסה
+        #           בסלוט אחר שפותח משמרות נוספות, ואז ממלא מחדש
+        if self._unblock_adjacent_stuck():
+            self._fill_underquota()
+
+        # שלב 5ד — מוצא אחרון: כפיית מילוי עובדים מתחת למכסה עם הפרות רכות
         self._fill_underquota_force()
 
         # שלב 6 — החלפת הפרות כאשר קיימת החלפה נקייה
@@ -143,6 +148,9 @@ class Scheduler:
         # שלב 6ב — העברת הפרות שנותרו מעובדים בכירים לצעירים
         self._migrate_violations_to_juniors()
 
+        # שלב 6ג — הפרות סוף שבוע שנותרו: העברה ל-junior כ-OT כאשר אין החלפה נקייה
+        self._migrate_weekend_violations_to_juniors_ot()
+
         # שלב 7 — בתוך כל (day, shift), מיון מחדש כך שעמדות חשובות יותר
         #           תמיד מכילות עובדים בכירים יותר
         self._sort_within_shifts()
@@ -150,7 +158,11 @@ class Scheduler:
         # שלב 8 — חישוב מחדש של דגלי OT לאחר שכל השלבים התייצבו
         self._recompute_ot()
 
-        # שלב 9 — רישום עובדים מתחת למכסה (אמור להיות ריק)
+        # שלב 9 — איזון OT: העברת OT ממי שיש לו 2+ ל-0-OT employees זכאים
+        self._equalize_ot()
+        self._recompute_ot()
+
+        # שלב 10 — רישום עובדים מתחת למכסה (אמור להיות ריק)
         self._report_shortage()
 
     # -----------------------------------------------------------------------
@@ -277,6 +289,13 @@ class Scheduler:
 
             print(f"[Scheduler] WARNING: Could not fill "
                   f"{slot.position_name} | {slot.shift_type.value} | {DAYS[slot.day]}")
+            reason_counts: dict = {}
+            for emp in self.employees.values():
+                _, reasons = can_assign(emp, slot, allow_blocked=True, allow_extra_night=True)
+                for r in reasons:
+                    reason_counts[r] = reason_counts.get(r, 0) + 1
+            for reason, count in sorted(reason_counts.items(), key=lambda x: -x[1]):
+                print(f"    [{count:2d} חסומים] {reason}")
 
     # -----------------------------------------------------------------------
     # שלב 4 — החלפת הפרות
@@ -467,6 +486,117 @@ class Scheduler:
                         break
                 if not found:
                     break
+
+    def _unblock_adjacent_stuck(self) -> bool:
+        """שלב 5ג: מחליף סלוט חוסם של עובד תקוע בסלוט שפותח משמרות נוספות.
+
+        מצב בעייתי לדוגמה: עובד קיבל שבת-צהריים, אך שבת-בוקר ושבת-לילה חסומות
+        עקב כלל רצף (בוקר+צהריים, צהריים+לילה). ההחלפה: מוצאים עובד אחר (emp_b)
+        שיכול לקחת את הסלוט החוסם, ועובד emp_a מקבל במקומו סלוט שלא חוסם שאר
+        האפשרויות שלו.
+
+        מחזיר True אם בוצעה לפחות החלפה אחת.
+        """
+        made_swap = False
+
+        for emp_a in [e for e in self.employees.values()
+                      if e.assigned_count < e.required_shifts]:
+
+            for block_day, block_shift, block_pos in list(emp_a.assigned):
+                block_slot = next(
+                    (s for s in self.slots
+                     if s.assigned_employee == emp_a.name
+                     and s.day == block_day and s.shift_type == block_shift
+                     and s.position_name == block_pos),
+                    None,
+                )
+                if block_slot is None or block_slot.locked:
+                    continue
+
+                # בדוק כמה סלוטים emp_a יכול לקחת עם/בלי הסלוט החוסם
+                emp_a.assigned.remove((block_day, block_shift, block_pos))
+                slots_without = [
+                    s for s in self.slots
+                    if s.assigned_employee and s.assigned_employee != emp_a.name
+                    and not s.locked
+                    and can_assign(emp_a, s)[0]
+                ]
+                emp_a.assigned.append((block_day, block_shift, block_pos))
+
+                slots_with = [
+                    s for s in self.slots
+                    if s.assigned_employee and s.assigned_employee != emp_a.name
+                    and not s.locked
+                    and can_assign(emp_a, s)[0]
+                ]
+
+                # הסרת הסלוט החוסם פותחת אפשרויות חדשות שאינן קיימות כעת
+                needed_more = emp_a.required_shifts - emp_a.assigned_count  # כמה חסר
+                if len(slots_without) <= len(slots_with):
+                    continue  # הסלוט הנוכחי אינו חוסם — דלג
+                if len(slots_without) < needed_more:
+                    continue  # גם לאחר הסרה אין מספיק אפשרויות
+
+                # חפש emp_b שיכול לקחת את הסלוט החוסם ולתת ל-emp_a סלוט אחר
+                for swap_slot in slots_without:
+                    emp_b_name = swap_slot.assigned_employee
+                    if not emp_b_name or emp_b_name == emp_a.name:
+                        continue
+                    emp_b = self.employees.get(emp_b_name)
+                    if emp_b is None:
+                        continue
+
+                    # דלג אם ה-swap הוא אותו יום+משמרת כמו הסלוט החוסם — לא באמת עוזר
+                    if swap_slot.day == block_day and swap_slot.shift_type == block_shift:
+                        continue
+
+                    # בדוק שלאחר ה-swap, emp_a יכול להגיע למכסה
+                    emp_a.assigned.remove((block_day, block_shift, block_pos))
+                    emp_a.assigned.append((swap_slot.day, swap_slot.shift_type, swap_slot.position_name))
+                    post_swap_options = [
+                        s for s in self.slots
+                        if s.assigned_employee and s.assigned_employee != emp_a.name
+                        and not s.locked and can_assign(emp_a, s)[0]
+                    ]
+                    emp_a.assigned.remove((swap_slot.day, swap_slot.shift_type, swap_slot.position_name))
+                    emp_a.assigned.append((block_day, block_shift, block_pos))
+
+                    if len(post_swap_options) < needed_more:
+                        continue  # גם לאחר ה-swap אין מספיק אפשרויות
+
+                    # emp_b מוסר את swap_slot ל-emp_a ולוקח את block_slot
+                    if not self._can_swap_into(emp_b, swap_slot, block_slot):
+                        continue
+
+                    emp_a.assigned.remove((block_day, block_shift, block_pos))
+                    ok_a, _ = can_assign(emp_a, swap_slot)
+                    emp_a.assigned.append((block_day, block_shift, block_pos))
+                    if not ok_a:
+                        continue
+
+                    # ביצוע ההחלפה
+                    block_slot.assigned_employee = emp_b_name
+                    swap_slot.assigned_employee  = emp_a.name
+                    emp_a.assigned.remove((block_day, block_shift, block_pos))
+                    emp_a.assigned.append((swap_slot.day, swap_slot.shift_type, swap_slot.position_name))
+                    emp_b.assigned.remove((swap_slot.day, swap_slot.shift_type, swap_slot.position_name))
+                    emp_b.assigned.append((block_day, block_shift, block_pos))
+
+                    print(
+                        f"[Scheduler] UnblockSwap: {emp_a.name} "
+                        f"({DAYS[block_day]} {block_shift.value}"
+                        f" <-> {DAYS[swap_slot.day]} {swap_slot.shift_type.value}"
+                        f" from {emp_b_name})"
+                    )
+                    made_swap = True
+                    break
+
+                if made_swap:
+                    break
+            if made_swap:
+                break
+
+        return made_swap
 
     def _fill_underquota_force(self) -> None:
         """שלב 5ג: מילוי מוצא אחרון באמצעות הפרות רכות.
@@ -861,6 +991,79 @@ class Scheduler:
                 break
 
     # -----------------------------------------------------------------------
+    # שלב 6ג — הפרות סוף שבוע: העברה ל-junior כ-OT כאשר אין החלפה נקייה
+    # -----------------------------------------------------------------------
+
+    def _migrate_weekend_violations_to_juniors_ot(self) -> None:
+        """שלב 6ג: לכל הפרת סוף שבוע שנותרה אצל עובד בכיר —
+        מוצא את ה-junior הצעיר ביותר שיכול לקחת את ה-slot (גם כ-OT/הפרה),
+        מעביר אליו ומוריד את הבכיר מהסלוט (הבכיר נשאר מתחת למכסה ב-1).
+        רק מופעל כאשר שלב 6ב לא הצליח (אין החלפה נקייה).
+        """
+        s_cfg = _cfg.SCHEDULING
+        weekend_days = {s_cfg["friday_idx"], s_cfg["saturday_idx"]}
+
+        for v_emp_name, v_day, v_shift in list(self.violations):
+            if v_day not in weekend_days:
+                continue
+
+            emp_a = self.employees.get(v_emp_name)
+            if emp_a is None:
+                continue
+
+            slot_a = next(
+                (s for s in self.slots
+                 if s.assigned_employee == v_emp_name
+                 and s.day == v_day and s.shift_type == v_shift),
+                None,
+            )
+            if slot_a is None or slot_a.locked:
+                continue
+
+            rank_a = self._seniority_rank.get(v_emp_name, 999)
+
+            best: Optional[Tuple[int, Employee]] = None
+            for emp_b in self.employees.values():
+                if emp_b is emp_a or emp_b.is_stub:
+                    continue
+                rank_b = self._seniority_rank.get(emp_b.name, 999)
+                if rank_b <= rank_a:
+                    continue
+                ok_b, _ = can_assign(emp_b, slot_a,
+                                     allow_blocked=True, allow_overload=True)
+                if not ok_b:
+                    continue
+                if best is None or rank_b > best[0]:
+                    best = (rank_b, emp_b)
+
+            if best is None:
+                continue
+
+            rank_b, emp_b = best
+
+            slot_a.assigned_employee = emp_b.name
+            emp_a.assigned.remove((v_day, v_shift, slot_a.position_name))
+            emp_b.assigned.append((v_day, v_shift, slot_a.position_name))
+
+            emp_a.violations.remove((v_day, v_shift))
+            self.violations.remove((v_emp_name, v_day, v_shift))
+
+            new_violation = (
+                not emp_b.is_available(v_day, v_shift)
+                or (v_day, v_shift) in emp_b.forecast_blocked
+            )
+            if new_violation:
+                emp_b.violations.append((v_day, v_shift))
+                self.violations.append((emp_b.name, v_day, v_shift))
+
+            print(
+                f"[Scheduler] WeekendViol->OT: {v_emp_name} (rank {rank_a}) "
+                f"({DAYS[v_day]} {v_shift.value}) "
+                f"-> {emp_b.name} (rank {rank_b})"
+                + (" [new violation]" if new_violation else "")
+            )
+
+    # -----------------------------------------------------------------------
     # שלב 7 — מיון בתוך משמרות לפי התאמת ותק-לחשיבות
     # -----------------------------------------------------------------------
 
@@ -991,7 +1194,67 @@ class Scheduler:
                     slot.is_ot = (day, shift, pos) in ot_set
 
     # -----------------------------------------------------------------------
-    # שלב 9 — דיווח מחסור
+    # שלב 9 — איזון OT
+    # -----------------------------------------------------------------------
+
+    def _equalize_ot(self) -> None:
+        """מעביר OT ממי שיש לו 2+ ל-0-OT employees זכאים.
+
+        רץ בלולאה עד שאין יותר העברות אפשריות. בכל סיבוב:
+          - emp_b: עובד עם 2+ OT, ממוין לפי כמות OT יורדת
+          - emp_a: עובד עם 0 OT שכבר במכסה (הבא יהיה OT שלו),
+                   ממוין לפי צעיר ראשון
+        can_assign בודק את כל האילוצים הקשיחים — ללא הפרת זמינות.
+        """
+        improved = True
+        while improved:
+            improved = False
+            overloaded = sorted(
+                [e for e in self.employees.values()
+                 if not e.is_stub and len(e.ot_assignments) >= 2],
+                key=lambda e: -len(e.ot_assignments),
+            )
+            zero_ot = sorted(
+                [e for e in self.employees.values()
+                 if not e.is_stub
+                 and not e.ot_assignments
+                 and e.assigned_count >= e.required_shifts],
+                key=lambda e: self._junior_key(e),
+            )
+            if not overloaded or not zero_ot:
+                break
+
+            for emp_b in overloaded:
+                found = False
+                for d, sh, pos in list(emp_b.ot_assignments):
+                    slot = next(
+                        (s for s in self.slots
+                         if s.assigned_employee == emp_b.name
+                         and s.day == d and s.shift_type == sh
+                         and s.position_name == pos),
+                        None,
+                    )
+                    if slot is None or slot.locked:
+                        continue
+                    for emp_a in zero_ot:
+                        if emp_a is emp_b:
+                            continue
+                        ok, _ = can_assign(emp_a, slot)
+                        if not ok:
+                            continue
+                        self._transfer_slot(slot, emp_b, emp_a)
+                        print(f"[Scheduler] EqualizeOT: {emp_a.name} <- "
+                              f"{DAYS[d]} {sh.value} from {emp_b.name}")
+                        improved = True
+                        found = True
+                        break
+                    if found:
+                        break
+                if found:
+                    break
+
+    # -----------------------------------------------------------------------
+    # שלב 10 — דיווח מחסור
     # -----------------------------------------------------------------------
 
     def _report_shortage(self) -> None:
@@ -1009,12 +1272,37 @@ class Scheduler:
     # פונקציות עזר להקצאה
     # -----------------------------------------------------------------------
 
+    def _would_get_stuck(self, emp: Employee, slot: PositionSlot) -> bool:
+        """בודק האם הקצאת slot ל-emp תחסום אותו מלהגיע ל-required_shifts.
+
+        רלוונטי רק לעובדים שעדיין יזדקקו למשמרות נוספות לאחר ההקצאה.
+        בודק כמה סלוטים פתוחים נותרים שהעובד יכול לקחת — אם פחות מהנדרש, הוא ייתקע.
+        """
+        if emp.assigned_count + 1 >= emp.required_shifts:
+            return False  # ההקצאה הזו תבצע את המכסה — לא ייתקע
+
+        emp.assigned.append((slot.day, slot.shift_type, slot.position_name))
+        still_needs = emp.required_shifts - emp.assigned_count  # לאחר ההקצאה
+        reachable = 0
+        for s in self.slots:
+            if not s.is_open:
+                continue
+            if can_assign(emp, s)[0]:
+                reachable += 1
+                if reachable >= still_needs:
+                    break
+        emp.assigned.remove((slot.day, slot.shift_type, slot.position_name))
+        return reachable < still_needs
+
     def _try_assign(self, slot: PositionSlot, *, night_spread: bool = False) -> None:
         """ניסיון להקצות את העובד הזכאי הטוב ביותר ל-*slot*."""
         # --- מועמדים רגילים (ללא הפרת אילוץ) ---
         candidates = self._get_candidates(slot)
         if candidates:
-            best = self._pick_normal_candidate(candidates, slot, night_spread=night_spread)
+            # סינון עובדים שההקצאה הזו תחסום אותם מלהגיע למכסה
+            non_stuck = [c for c in candidates if not self._would_get_stuck(c, slot)]
+            pool = non_stuck if non_stuck else candidates
+            best = self._pick_normal_candidate(pool, slot, night_spread=night_spread)
             self._do_assign(slot, best)
             return
 
@@ -1076,10 +1364,16 @@ class Scheduler:
           שלישוני : ותק (צעיר סופג לילות / בכיר מקבל סלוטים טובים)
         """
         def _base_key(emp: Employee):
-            need   = emp.required_shifts - emp.assigned_count
+            need = emp.required_shifts - emp.assigned_count
             nights = emp.night_count if night_spread else 0
-            sen    = self._junior_key(emp) if night_spread else -self._junior_key(emp)
-            return (-need, nights, sen)
+            if need > 0:
+                # Still needs shifts: most-needed first, standard seniority preference
+                sen = self._junior_key(emp) if night_spread else -self._junior_key(emp)
+                return (0, -need, nights, sen)
+            else:
+                # At quota or already in OT: round-robin — fewest OT shifts first, then junior first
+                ot_count = -need
+                return (1, ot_count, nights, self._junior_key(emp))
 
         slot_imp = slot.position_importance
         if night_spread or slot_imp >= 999:

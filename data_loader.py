@@ -504,13 +504,19 @@ def merge_into_employees(
     עובדים שקיימים ב-*constraints* אך נעדרים מהצפי:
       → לא מתווספים; במקום זאת מודפסת אזהרה.
 
-    התאמת שמות היא דו-שלבית:
+    התאמת שמות היא תלת-שלבית:
       1. התאמה מדויקת (אותיות קטנות + הסרת רווחים)
       2. התאמה מנורמלת (הסרת סוגריים, מחיקת פיסוק)
+      3. ניסיון עם שם הפוך (LAST FIRST → FIRST LAST) לטיפול בשוני סדר שם
     """
     # בניית מפות בדיקה מדויקות ומנורמלות
     exact_map = {e.name.strip().lower(): e for e in employees}
     norm_map  = {_normalise_name(e.name): e for e in employees}
+
+    def _reversed_name(name: str) -> str:
+        """הופך סדר מילים בשם: 'MERSO MELKAMU' → 'MELKAMU MERSO'."""
+        parts = name.strip().split()
+        return " ".join(reversed(parts)) if len(parts) >= 2 else name
 
     unmatched_constraint_names: List[str] = []
 
@@ -519,12 +525,20 @@ def merge_into_employees(
         norm_key  = _normalise_name(emp_name)
 
         emp = exact_map.get(exact_key) or norm_map.get(norm_key)
+
+        # שלב 3: ניסיון עם שם הפוך
+        if emp is None:
+            rev_key  = _reversed_name(emp_name).strip().lower()
+            rev_norm = _normalise_name(_reversed_name(emp_name))
+            emp = exact_map.get(rev_key) or norm_map.get(rev_norm)
+
         if emp is None:
             unmatched_constraint_names.append(emp_name)
             continue
 
-        emp.availability    = avail
-        emp.has_constraints = True
+        emp.availability         = avail
+        emp.has_constraints      = True
+        emp.matched_constraints  = True
 
     if unmatched_constraint_names:
         print(f"[Loader] {len(unmatched_constraint_names)} constraint entries could not "
@@ -539,10 +553,14 @@ def merge_into_employees(
         if not emp.has_constraints:
             emp.availability = {(d, s): True for d in range(7) for s in SHIFT_ORDER}
 
-    # X בצפי הוא חסימה קשיחה: תמיד מבטל את קובץ האילוצים.
+    # X בצפי:
+    #   אם האילוצים כבר חוסמים את המשמרת → X הגיע משלב 1, אילוץ רך (לא forecast_blocked).
+    #   אם האילוצים לא חסמו → המנהל הוסיף ידנית → חסימה קשיחה (forecast_blocked).
     for emp in employees:
         for (day, shift), val in emp.forecast_cells.items():
             if val.upper() == "X":
+                if emp.availability.get((day, shift), True):
+                    emp.forecast_blocked.add((day, shift))
                 emp.availability[(day, shift)] = False
 
 

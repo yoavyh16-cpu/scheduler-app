@@ -142,20 +142,35 @@ def can_assign(
             reasons.append("employee has AL/SLE — OT not allowed")
             return False, reasons
         if (slot.day, slot.shift_type) in _OT_FORBIDDEN:
-            reasons.append("OT forbidden on this slot (Friday noon/night or Saturday)")
-            return False, reasons
+            # אפשר הקצאה אם לעובד יש משמרת חול שתספוג את ה-OT label.
+            # _recompute_ot ידאג שה-OT flag יינחת על משמרת חול, לא על שבת/שישי-צהריים.
+            has_absorber = any(
+                (d, sh) not in _OT_FORBIDDEN
+                for d, sh, _ in emp.assigned
+            )
+            if not has_absorber:
+                reasons.append("OT forbidden on this slot and no weekday shift to absorb OT label")
+                return False, reasons
 
-    # 1. זמינות (רך — ניתן לביטול)
+    # 0d. X בצפי — חסימה קשיחה (לא ניתן לביטול, בניגוד ל-X בקובץ האילוצים)
+    if (slot.day, slot.shift_type) in emp.forecast_blocked:
+        reasons.append("shift is hard-blocked by forecast X (cannot override)")
+        return False, reasons
+
+    # 1. זמינות מקובץ האילוצים (רך — ניתן לביטול עם allow_blocked)
     if not allow_blocked and not emp.is_available(slot.day, slot.shift_type):
         reasons.append("shift is blocked (X) for this employee")
 
     # 1b. עמדות בוקר ארוכות: צהריים חייבים להיות זמינים — קשיח, לא ניתן לביטול.
     # עמדות אלו נמשכות לתוך הצהריים, לכן חסימת צהריים מוחלטת כמו אילוץ רצף
     # ללא תלות ב-allow_blocked.
+    # בודק גם X מקובץ האילוצים וגם X שהמנהל שם בקובץ הצפי.
     _long_morning = {p.lower().strip() for p in _cfg.POSITIONS.get("long_morning_positions", [])}
+    _noon_constraints_blocked = not emp.is_available(slot.day, ShiftType.NOON)
+    _noon_forecast_blocked = (slot.day, ShiftType.NOON) in emp.forecast_blocked
     if (slot.shift_type == ShiftType.MORNING
             and slot.position_name.strip().lower() in _long_morning
-            and not emp.is_available(slot.day, ShiftType.NOON)):
+            and (_noon_constraints_blocked or _noon_forecast_blocked)):
         reasons.append(f"{slot.position_name} is a long morning shift — noon is blocked for this employee")
 
     # 2. כבר עובד באותו סלוט

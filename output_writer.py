@@ -30,6 +30,7 @@ from models import DAYS, SHIFT_ORDER, Employee, PositionSlot, ShiftType
 RED_FILL    = PatternFill(start_color="FF6B6B", end_color="FF6B6B", fill_type="solid")
 YELLOW_FILL = PatternFill(start_color="FFFF99", end_color="FFFF99", fill_type="solid")
 ORANGE_FILL = PatternFill(start_color="FFB347", end_color="FFB347", fill_type="solid")
+BLUE_FILL   = PatternFill(start_color="9DC3E6", end_color="9DC3E6", fill_type="solid")
 GRAY_FILL   = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
 RED_FONT    = Font(color="CC0000", bold=True)
 BOLD_FONT   = Font(bold=True)
@@ -200,6 +201,9 @@ def write_forecast_filled(
                     cell.font = RED_FONT
                 elif is_ot:
                     cell.fill = ORANGE_FILL
+                    cell.font = BOLD_FONT
+                elif shift == ShiftType.NIGHT:
+                    cell.fill = BLUE_FILL
                     cell.font = BOLD_FONT
                 else:
                     cell.font = BOLD_FONT
