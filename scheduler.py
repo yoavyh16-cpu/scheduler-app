@@ -151,6 +151,9 @@ class Scheduler:
         # שלב 6ג — הפרות סוף שבוע שנותרו: העברה ל-junior כ-OT כאשר אין החלפה נקייה
         self._migrate_weekend_violations_to_juniors_ot()
 
+        # שלב 6ד — איזון הפרות: עובד עם 2+ הפרות מחליף עם עובד בעל 0 הפרות
+        self._equalize_violations()
+
         # שלב 7 — בתוך כל (day, shift), מיון מחדש כך שעמדות חשובות יותר
         #           תמיד מכילות עובדים בכירים יותר
         self._sort_within_shifts()
@@ -941,9 +944,10 @@ class Scheduler:
                     if not ok_b:
                         continue
 
-                    # עדיפות לסופג הצעיר ביותר (מספר דרגה גבוה ביותר)
-                    if best is None or rank_b > best[0]:
-                        best = (rank_b, slot_b, emp_b)
+                    # עדיפות: פחות הפרות קודם, אחר כך הצעיר ביותר
+                    score_b = (len(emp_b.violations), -rank_b)
+                    if best is None or score_b < best[0]:
+                        best = (score_b, slot_b, emp_b)
 
                 if best is None:
                     continue
@@ -983,7 +987,7 @@ class Scheduler:
                     f"[Scheduler] MigrateViol: {v_emp_name} (rank {rank_a}) "
                     f"({DAYS[v_day]} {v_shift.value}"
                     f" -> {DAYS[slot_b.day]} {slot_b.shift_type.value}) "
-                    f"<-> {emp_b_name} (rank {best[0]}) "
+                    f"<-> {emp_b_name} (rank {self._seniority_rank.get(emp_b_name, 999)}) "
                     f"({DAYS[slot_b.day]} {slot_b.shift_type.value}"
                     f" -> {DAYS[v_day]} {v_shift.value}) [{outcome}]"
                 )
@@ -1033,13 +1037,15 @@ class Scheduler:
                                      allow_blocked=True, allow_overload=True)
                 if not ok_b:
                     continue
-                if best is None or rank_b > best[0]:
-                    best = (rank_b, emp_b)
+                    # עדיפות: פחות הפרות קודם, אחר כך הצעיר ביותר
+                    score_b = (len(emp_b.violations), -rank_b)
+                    if best is None or score_b < best[0]:
+                        best = (score_b, emp_b)
 
             if best is None:
                 continue
 
-            rank_b, emp_b = best
+            _, emp_b = best
 
             slot_a.assigned_employee = emp_b.name
             emp_a.assigned.remove((v_day, v_shift, slot_a.position_name))
@@ -1059,9 +1065,115 @@ class Scheduler:
             print(
                 f"[Scheduler] WeekendViol->OT: {v_emp_name} (rank {rank_a}) "
                 f"({DAYS[v_day]} {v_shift.value}) "
-                f"-> {emp_b.name} (rank {rank_b})"
+                f"-> {emp_b.name} (rank {self._seniority_rank.get(emp_b.name, 999)})"
                 + (" [new violation]" if new_violation else "")
             )
+
+    # -----------------------------------------------------------------------
+    # שלב 6ד — איזון הפרות
+    # -----------------------------------------------------------------------
+
+    def _equalize_violations(self) -> None:
+        """שלב 6ד: מפזר הפרות מעובד עם 2+ הפרות לעובד עם 0 הפרות.
+
+        ללא הגבלת כיוון ותק — עובד ותיק עם 0 הפרות עדיף על צעיר עם 1+.
+        בטוח מפני מחזוריות: מחליף רק עם עובד בעל 0 הפרות (שהופך ל-1 לאחר ההחלפה),
+        כך שאף עובד לא יבחר פעמיים כסופג.
+        """
+        improved = True
+        while improved:
+            improved = False
+            over = sorted(
+                [e for e in self.employees.values()
+                 if not e.is_stub and len(e.violations) >= 2],
+                key=lambda e: -len(e.violations),
+            )
+            for emp_a in over:
+                found = False
+                for v_day, v_shift in list(emp_a.violations):
+                    slot_a = next(
+                        (s for s in self.slots
+                         if s.assigned_employee == emp_a.name
+                         and s.day == v_day and s.shift_type == v_shift),
+                        None,
+                    )
+                    if slot_a is None or slot_a.locked:
+                        continue
+
+                    best: Optional[Tuple] = None
+                    for slot_b in self.slots:
+                        if slot_b is slot_a or slot_b.locked or not slot_b.assigned_employee:
+                            continue
+                        emp_b_name = slot_b.assigned_employee
+                        if emp_b_name == emp_a.name:
+                            continue
+                        emp_b = self.employees.get(emp_b_name)
+                        if emp_b is None or emp_b.is_stub:
+                            continue
+                        if len(emp_b.violations) > 0:
+                            continue  # רק 0-הפרות — מניעת מחזוריות
+
+                        if not self._can_swap_into(emp_a, slot_a, slot_b):
+                            continue
+
+                        entry_b = (slot_b.day, slot_b.shift_type, slot_b.position_name)
+                        emp_b.assigned.remove(entry_b)
+                        try:
+                            ok_b, _ = can_assign(emp_b, slot_a,
+                                                 allow_blocked=True, allow_overload=True)
+                        finally:
+                            emp_b.assigned.append(entry_b)
+                        if not ok_b:
+                            continue
+
+                        rank_b = self._seniority_rank.get(emp_b_name, 999)
+                        score = (len(emp_b.violations), -rank_b)
+                        if best is None or score < best[0]:
+                            best = (score, slot_b, emp_b)
+
+                    if best is None:
+                        continue
+
+                    _, slot_b, emp_b = best
+                    emp_b_name = emp_b.name
+                    new_violation = not emp_b.is_available(v_day, v_shift)
+                    old_b_vio = (slot_b.day, slot_b.shift_type) in emp_b.violations
+
+                    slot_a.assigned_employee = emp_b_name
+                    slot_b.assigned_employee = emp_a.name
+                    emp_a.assigned.remove((v_day, v_shift, slot_a.position_name))
+                    emp_a.assigned.append((slot_b.day, slot_b.shift_type, slot_b.position_name))
+                    emp_b.assigned.remove((slot_b.day, slot_b.shift_type, slot_b.position_name))
+                    emp_b.assigned.append((v_day, v_shift, slot_a.position_name))
+
+                    emp_a.violations.remove((v_day, v_shift))
+                    self.violations.remove((emp_a.name, v_day, v_shift))
+
+                    if old_b_vio:
+                        emp_b.violations.remove((slot_b.day, slot_b.shift_type))
+                        try:
+                            self.violations.remove((emp_b_name, slot_b.day, slot_b.shift_type))
+                        except ValueError:
+                            pass
+
+                    if new_violation:
+                        emp_b.violations.append((v_day, v_shift))
+                        self.violations.append((emp_b_name, v_day, v_shift))
+
+                    rank_a = self._seniority_rank.get(emp_a.name, 999)
+                    rank_b_n = self._seniority_rank.get(emp_b_name, 999)
+                    print(
+                        f"[Scheduler] EqualizeViol: {emp_a.name} (rank {rank_a}) "
+                        f"({DAYS[v_day]} {v_shift.value}"
+                        f" -> {DAYS[slot_b.day]} {slot_b.shift_type.value}) "
+                        f"<-> {emp_b_name} (rank {rank_b_n})"
+                        + (" [new violation]" if new_violation else " [clean]")
+                    )
+                    improved = True
+                    found = True
+                    break
+                if found:
+                    break
 
     # -----------------------------------------------------------------------
     # שלב 7 — מיון בתוך משמרות לפי התאמת ותק-לחשיבות
@@ -1401,10 +1513,11 @@ class Scheduler:
         return min(candidates, key=_proximity_key)
 
     def _pick_violation_candidate(self, candidates: List[Employee]) -> Employee:
-        """עבור הפרה (ביטול משמרת חסומה), בחירת העובד הצעיר ביותר תחילה."""
+        """עבור הפרה (ביטול משמרת חסומה), בחירת העובד הצעיר ביותר תחילה.
+        לפני שעובד מקבל הפרה שנייה, מועדף עובד עם פחות הפרות — כולל ותיק יותר."""
         def sort_key(emp: Employee):
             need = emp.required_shifts - emp.assigned_count
-            return (self._junior_key(emp), -need)
+            return (len(emp.violations), self._junior_key(emp), -need)
 
         return min(candidates, key=sort_key)
 
