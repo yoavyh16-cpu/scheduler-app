@@ -29,6 +29,34 @@ _ALL_SLOTS: List[Tuple[int, ShiftType]] = [
     for shift in [ShiftType.MORNING, ShiftType.NOON, ShiftType.NIGHT]
 ]
 _SLOT_INDEX = {slot: i for i, slot in enumerate(_ALL_SLOTS)}
+#_MAX_STREAK: int = _cfg.SCHEDULING["max_shift_streak"]
+
+
+def _streak_conflict(emp: Employee, day: int, shift: ShiftType) -> bool:
+    """מחזיר True אם הוספת (day, shift) תיצור רצף ארוך מ-_MAX_STREAK.
+
+    רצף מוגדר כסדרת משמרות שבה כל זוג עוקב נמצא בהבדל אינדקס ≤ 2
+    (כלומר לכל היותר חיץ משמרת אחת בין כל שתיים עוקבות).
+    """
+    new_idx = _SLOT_INDEX.get((day, shift))
+    if new_idx is None:
+        return False
+    indices = set()
+    for d, s, _ in emp.assigned:
+        idx = _SLOT_INDEX.get((d, s))
+        if idx is not None:
+            indices.add(idx)
+    indices.add(new_idx)
+    sorted_idx = sorted(indices)
+    current = 1
+    for i in range(1, len(sorted_idx)):
+        if sorted_idx[i] - sorted_idx[i - 1] <= 2:
+            current += 1
+            if current > _cfg.SCHEDULING["max_shift_streak"]:
+                return True
+        else:
+            current = 1
+    return False
 
 
 def _tr_conflict(emp: Employee, day: int, shift: ShiftType) -> bool:
@@ -134,6 +162,11 @@ def can_assign(
     # 0b. חלון TR — חסימה קשיחה: משמרת 1 לפני TR, TR עצמו, 2 משמרות אחרי (לא ניתן לביטול)
     if _tr_conflict(emp, slot.day, slot.shift_type):
         reasons.append("slot is within TR training window (hard block)")
+        return False, reasons
+
+    # 0b2. רצף משמרות — חסימה קשיחה: יותר מ-_MAX_STREAK משמרות ברצף (לא ניתן לביטול)
+    if _streak_conflict(emp, slot.day, slot.shift_type):
+        reasons.append(f"would create a streak longer than {_cfg.SCHEDULING['max_shift_streak']} shifts (hard block)")
         return False, reasons
 
     # 0c. חוקי OT — חלים בכל פעם שהקצאה זו תהיה שעות נוספות (בכל שלב)
