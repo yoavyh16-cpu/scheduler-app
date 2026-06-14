@@ -144,6 +144,39 @@ if st.session_state.stage in ("preview","done") and st.session_state.preview_byt
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 st.markdown('</div>', unsafe_allow_html=True)
 
+# הגדרות שיבוץ דינמיות
+st.markdown('<div class="step-card"><h3 style="direction: rtl; text-align: right;">⚙️ הגדרות שיבוץ להרצה הזו</h3>', unsafe_allow_html=True)
+
+import config as cfg
+
+col_a, col_b, col_c = st.columns(3)
+
+with col_a:
+    top_no_night = st.number_input("כמה בכירים בלי לילות?", min_value=0, max_value=100, value=10)
+    group2_size = st.number_input("גודל קבוצה שנייה", min_value=0, max_value=100, value=10)
+    group3_size = st.number_input("גודל קבוצה שלישית", min_value=0, max_value=100, value=10)
+
+with col_b:
+    group2_nights = st.number_input("מקסימום לילות לקבוצה שנייה", min_value=0, max_value=7, value=1)
+    group3_nights = st.number_input("מקסימום לילות לקבוצה שלישית", min_value=0, max_value=7, value=2)
+    rest_nights = st.number_input("מקסימום לילות לכל השאר", min_value=0, max_value=7, value=3)
+
+with col_c:
+    max_streak = st.number_input("מקסימום רצף משמרות", min_value=1, max_value=10, value=4)
+    max_shifts = st.number_input("מקסימום משמרות לעובד", min_value=1, max_value=14, value=7)
+
+cfg.SCHEDULING["night_limit_groups"] = [
+    [top_no_night, 0],
+    [group2_size, group2_nights],
+    [group3_size, group3_nights],
+    [None, rest_nights],
+]
+
+cfg.SCHEDULING["max_shift_streak"] = max_streak
+cfg.SCHEDULING["default_max_shifts"] = max_shifts
+
+st.markdown('</div>', unsafe_allow_html=True)
+
 # שלב 3
 st.markdown('<div class="step-card"><h3 style="direction: rtl; unicode-bidi: bidi-override; text-align: right;">שלב 3 — הרצת שיבוץ 🚀</h3>', unsafe_allow_html=True)
 st.markdown('<p style="color:#64748b;font-size:0.9rem;">העלה את קובץ הצפי המאושר והרץ את מנוע השיבוץ.</p>', unsafe_allow_html=True)
